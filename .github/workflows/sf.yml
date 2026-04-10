@@ -2,12 +2,8 @@ name: Auto Sync Fork
 
 on:
   schedule:
-    - cron: "0 7 * * *"
+    - cron: '0 7 * * *' # 每天 UTC 20:00
   workflow_dispatch:
-
-concurrency:
-  group: sync-fork
-  cancel-in-progress: true
 
 jobs:
   sync:
@@ -15,80 +11,50 @@ jobs:
 
     steps:
 
-      - name: Init repo
+      - name: Quick check if sync needed
+        id: quick_check
         run: |
-          git init
-          git remote add origin https://github.com/${{ github.repository }}.git
+          git clone --depth 1 https://github.com/${{ github.repository }}.git local_repo
+          cd local_repo
 
-          git fetch --depth=1 origin
+          # upstream 最新 commit
+          UPSTREAM_HASH=$(git ls-remote https://github.com/peiyingyao/Rule-for-OCD.git refs/heads/master | cut -f1)
 
-          # ✅ 强制绑定 origin HEAD，避免 HEAD 丢失
-          git checkout -B local origin/HEAD || git checkout -B master origin/master || true
+          # ⚠️ 修复点：不用 HEAD，改用 origin/master
+          LOCAL_HASH=$(git ls-remote origin refs/heads/master | cut -f1)
 
-      # upstream
-      - name: Add upstream
-        run: |
-          git remote add upstream https://github.com/peiyingyao/Rule-for-OCD.git
-          git fetch --depth=1 upstream
+          echo "UPSTREAM_HASH=$UPSTREAM_HASH"
+          echo "LOCAL_HASH=$LOCAL_HASH"
 
-      - name: Detect upstream branch
-        id: branch
-        run: |
-          BRANCH=$(git remote show upstream | awk '/HEAD branch/ {print $NF}')
-          echo "branch=$BRANCH"
-          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
-      - name: Ensure HEAD exists
-        run: |
-          git checkout -B sync origin/HEAD || git checkout -B sync origin/master || true
+          echo "UPSTREAM_HASH=$UPSTREAM_HASH" >> $GITHUB_OUTPUT
+          echo "LOCAL_HASH=$LOCAL_HASH" >> $GITHUB_OUTPUT
 
-      - name: Check updates
-        id: check
-        run: |
-          MAX_COMMITS=10
-
-          LOCAL=$(git rev-parse HEAD)
-          UPSTREAM=$(git rev-parse upstream/${{ steps.branch.outputs.branch }})
-
-          COUNT=$(git rev-list --count ${LOCAL}..${UPSTREAM})
-
-          echo "upstream commits: $COUNT"
-          echo "count=$COUNT" >> $GITHUB_OUTPUT
-
-          if [ "$COUNT" -gt "$MAX_COMMITS" ]; then
-            echo "skip=true" >> $GITHUB_OUTPUT
+          if [ "$UPSTREAM_HASH" != "$LOCAL_HASH" ]; then
+            echo "need_sync=true" >> $GITHUB_OUTPUT
           else
-            echo "skip=false" >> $GITHUB_OUTPUT
+            echo "need_sync=false" >> $GITHUB_OUTPUT
           fi
 
-      # sync upstream
-      - name: Sync upstream
-        if: steps.check.outputs.skip == 'false'
-        run: |
-          mkdir -p backup
+      - name: Full sync (only if needed)
+        if: steps.quick_check.outputs.need_sync == 'true'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-          cp -f .gitignore README.md .github/workflows/ci.yaml script/convert.sh backup/ || true
-
-          git merge upstream/${{ steps.branch.outputs.branch }} \
-            --strategy-option theirs \
-            --allow-unrelated-histories \
-            --no-edit
-
-          cp -f backup/.gitignore .gitignore || true
-          cp -f backup/README.md README.md || true
-          cp -f backup/ci.yaml .github/workflows/ci.yaml || true
-          cp -f backup/convert.sh script/convert.sh || true
-
-      # commit & push
-      - name: Commit and push
-        if: steps.check.outputs.skip == 'false'
+      - name: Setup and sync
+        if: steps.quick_check.outputs.need_sync == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          if [ -n "$(git status --porcelain)" ]; then
-            git add -A
-            git commit -m "sync upstream"
-            git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git HEAD:master || true
-          else
-            echo "No changes"
-          fi
+          git remote add upstream https://github.com/peiyingyao/Rule-for-OCD.git
+          git fetch upstream master
+
+          git merge upstream/master --no-edit
+
+          git push origin master
+
+      - name: Skip message
+        if: steps.quick_check.outputs.need_sync == 'false'
+        run: echo "✅ 已是最新，无需同步"
