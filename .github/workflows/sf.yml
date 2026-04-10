@@ -14,12 +14,16 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Init repo
         run: |
           git init
           git remote add origin https://github.com/${{ github.repository }}.git
+
           git fetch --depth=1 origin
-          git checkout -B master
+
+          # ✅ 强制绑定 origin HEAD，避免 HEAD 丢失
+          git checkout -B local origin/HEAD || git checkout -B master origin/master || true
 
       # upstream
       - name: Add upstream
@@ -30,11 +34,13 @@ jobs:
       - name: Detect upstream branch
         id: branch
         run: |
-          BRANCH=$(git remote show upstream | grep "HEAD branch" | awk '{print $NF}')
+          BRANCH=$(git remote show upstream | awk '/HEAD branch/ {print $NF}')
           echo "branch=$BRANCH"
           echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+      - name: Ensure HEAD exists
+        run: |
+          git checkout -B sync origin/HEAD || git checkout -B sync origin/master || true
 
-      # commit
       - name: Check updates
         id: check
         run: |
@@ -46,17 +52,15 @@ jobs:
           COUNT=$(git rev-list --count ${LOCAL}..${UPSTREAM})
 
           echo "upstream commits: $COUNT"
-
           echo "count=$COUNT" >> $GITHUB_OUTPUT
 
           if [ "$COUNT" -gt "$MAX_COMMITS" ]; then
             echo "skip=true" >> $GITHUB_OUTPUT
-            echo "Too many commits, skip sync"
           else
             echo "skip=false" >> $GITHUB_OUTPUT
           fi
 
-      # sync
+      # sync upstream
       - name: Sync upstream
         if: steps.check.outputs.skip == 'false'
         run: |
@@ -74,7 +78,7 @@ jobs:
           cp -f backup/ci.yaml .github/workflows/ci.yaml || true
           cp -f backup/convert.sh script/convert.sh || true
 
-      # push
+      # commit & push
       - name: Commit and push
         if: steps.check.outputs.skip == 'false'
         run: |
@@ -84,7 +88,7 @@ jobs:
           if [ -n "$(git status --porcelain)" ]; then
             git add -A
             git commit -m "sync upstream"
-            git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git master
+            git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git HEAD:master || true
           else
             echo "No changes"
           fi
