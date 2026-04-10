@@ -20,7 +20,6 @@ jobs:
           # upstream 最新 commit
           UPSTREAM_HASH=$(git ls-remote https://github.com/peiyingyao/Rule-for-OCD.git refs/heads/master | cut -f1)
 
-          # ⚠️ 修复点：不用 HEAD，改用 origin/master
           LOCAL_HASH=$(git ls-remote origin refs/heads/master | cut -f1)
 
           echo "UPSTREAM_HASH=$UPSTREAM_HASH"
