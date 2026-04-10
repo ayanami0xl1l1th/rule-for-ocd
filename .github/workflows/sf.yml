@@ -14,5 +14,6 @@ jobs:
         uses: tgymnich/fork-sync@v2.0.10
         with:
           owner: peiyingyao
+          repo: Rule-for-OCD
           base: master
           head: master
