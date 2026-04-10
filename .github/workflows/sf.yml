@@ -1,64 +1,99 @@
-name: Auto Sync Fork
+name: ci
 
 on:
-  schedule:
-    - cron: "0 7 * * *"   # 每天 UTC 07:00（你可以改）
   workflow_dispatch:
 
-concurrency:
-  group: sync-fork
-  cancel-in-progress: true
+  schedule:
+    - cron: '0 7 * * *'
+
+  workflow_run:
+    workflows: ["Auto Sync Fork"]
+    types:
+      - completed
 
 jobs:
-  sync:
+  build:
+    if: >
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
+
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
-      - name: Checkout fork repo
+      # checkout
+      - name: Checkout repo (fast mode)
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # 必须全历史，否则没法比较 commit 数
+          fetch-depth: 1
+          ref: master
+          persist-credentials: true
 
-      - name: Add upstream
+      - name: Set variables
         run: |
-          git remote add upstream https://github.com/peiyingyao/Rule-for-OCD.git
-          git fetch upstream
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          echo "BUILDTIME=$(TZ=Asia/Shanghai date +'%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
+          echo "REPODIR=$PWD" >> $GITHUB_ENV
 
-      - name: Check commit count difference
-        id: check
+      # Sync upstream
+      - name: Sync with upstream
         run: |
-          # 👉 这里可以改阈值（默认10）
-          MAX_COMMITS=10
+          git checkout master
+          git remote add upstream https://github.com/blackmatrix7/ios_rule_script.git
+          git fetch --depth=1 upstream
 
-          LOCAL=$(git rev-parse HEAD)
-          UPSTREAM=$(git rev-parse upstream/main)
+          mkdir -p ./backup/
 
-          COUNT=$(git rev-list --count ${LOCAL}..${UPSTREAM})
+          cp -f .gitignore README.md .github/workflows/ci.yaml script/convert.sh ./backup/
 
-          echo "Upstream ahead commits: $COUNT"
+          git merge upstream/master --strategy-option theirs --allow-unrelated-histories --no-edit
 
-          echo "count=$COUNT" >> $GITHUB_OUTPUT
-          echo "max=$MAX_COMMITS" >> $GITHUB_OUTPUT
+          cp -f ./backup/.gitignore .gitignore
+          cp -f ./backup/README.md README.md
+          cp -f ./backup/ci.yaml .github/workflows/ci.yaml
+          cp -f ./backup/convert.sh script/convert.sh
 
-          if [ "$COUNT" -gt "$MAX_COMMITS" ]; then
-            echo "Too many commits, skip auto sync"
-            echo "skip=true" >> $GITHUB_OUTPUT
+      # subconverter
+      - name: Background run subconverter
+        run: |
+          curl -s https://api.github.com/repos/tindy2013/subconverter/releases \
+            | grep "browser_download_url.*subconverter_linux64.tar.gz" \
+            | head -n 1 \
+            | cut -d '"' -f 4 \
+            | xargs wget -q
+
+          tar -xf subconverter_linux64.tar.gz
+          ./subconverter/subconverter &
+
+          python3 -m http.server 8080 --bind 127.0.0.1 --directory './rule/' &
+
+      # mihomo
+      - name: Background run mihomo
+        run: |
+          curl -s https://api.github.com/repos/MetaCubeX/mihomo/releases \
+            | grep "browser_download_url.*mihomo-linux-amd64-alpha.*.deb" \
+            | head -n 1 \
+            | cut -d '"' -f 4 \
+            | xargs wget -q -O mihomo-linux-amd64-alpha.deb
+
+          sudo apt install --fix-missing ./mihomo-linux-amd64-alpha.deb
+          /usr/bin/mihomo &
+
+      # convert
+      - name: start convert
+        run: |
+          chmod +x ./script/convert.sh
+          ./script/convert.sh
+
+      # commit
+      - name: Commit and Push Changes
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            git add --all
+            git commit -m "${{ env.BUILDTIME }} for OCD"
+            git push origin master
           else
-            echo "skip=false" >> $GITHUB_OUTPUT
+            echo "No changes to commit"
           fi
-
-      - name: Sync fork
-        if: steps.check.outputs.skip == 'false'
-        run: |
-          git merge upstream/main --no-edit
-
-      - name: Push changes
-        if: steps.check.outputs.skip == 'false'
-        run: |
-          git push origin HEAD:main
-
-      - name: Warning (manual sync needed)
-        if: steps.check.outputs.skip == 'true'
-        run: |
-          echo "⚠️ Upstream commits exceed limit (${{ steps.check.outputs.count }} > ${{ steps.check.outputs.max }})"
-          echo "⚠️ Please sync manually!"
