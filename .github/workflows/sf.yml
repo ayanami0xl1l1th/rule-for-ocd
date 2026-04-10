@@ -1,99 +1,80 @@
-name: ci
+name: Auto Sync Fork
 
 on:
+  schedule:
+    - cron: "0 7 * * *"
   workflow_dispatch:
 
-  schedule:
-    - cron: '0 7 * * *'
-
-  workflow_run:
-    workflows: ["Auto Sync Fork"]
-    types:
-      - completed
+concurrency:
+  group: sync-fork
+  cancel-in-progress: true
 
 jobs:
-  build:
-    if: >
-      github.event_name != 'workflow_run' ||
-      github.event.workflow_run.conclusion == 'success'
-
+  sync:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
 
     steps:
       # checkout
-      - name: Checkout repo (fast mode)
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-          ref: master
-          persist-credentials: true
-
-      - name: Set variables
+      - name: Init repo (fast)
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          echo "BUILDTIME=$(TZ=Asia/Shanghai date +'%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
-          echo "REPODIR=$PWD" >> $GITHUB_ENV
-
-      # Sync upstream
-      - name: Sync with upstream
-        run: |
+          git init
+          git remote add origin https://github.com/${{ github.repository }}.git
+          git fetch --depth=1 origin master
           git checkout master
-          git remote add upstream https://github.com/blackmatrix7/ios_rule_script.git
+
+      # Add upstream
+      - name: Add upstream
+        run: |
+          git remote add upstream https://github.com/peiyingyao/Rule-for-OCD.git
           git fetch --depth=1 upstream
 
-          mkdir -p ./backup/
-
-          cp -f .gitignore README.md .github/workflows/ci.yaml script/convert.sh ./backup/
-
-          git merge upstream/master --strategy-option theirs --allow-unrelated-histories --no-edit
-
-          cp -f ./backup/.gitignore .gitignore
-          cp -f ./backup/README.md README.md
-          cp -f ./backup/ci.yaml .github/workflows/ci.yaml
-          cp -f ./backup/convert.sh script/convert.sh
-
-      # subconverter
-      - name: Background run subconverter
+      # Check commit difference
+      - name: Check updates
+        id: check
         run: |
-          curl -s https://api.github.com/repos/tindy2013/subconverter/releases \
-            | grep "browser_download_url.*subconverter_linux64.tar.gz" \
-            | head -n 1 \
-            | cut -d '"' -f 4 \
-            | xargs wget -q
+          MAX_COMMITS=10
 
-          tar -xf subconverter_linux64.tar.gz
-          ./subconverter/subconverter &
+          LOCAL=$(git rev-parse HEAD)
+          UPSTREAM=$(git rev-parse upstream/main)
 
-          python3 -m http.server 8080 --bind 127.0.0.1 --directory './rule/' &
+          COUNT=$(git rev-list --count ${LOCAL}..${UPSTREAM})
 
-      # mihomo
-      - name: Background run mihomo
-        run: |
-          curl -s https://api.github.com/repos/MetaCubeX/mihomo/releases \
-            | grep "browser_download_url.*mihomo-linux-amd64-alpha.*.deb" \
-            | head -n 1 \
-            | cut -d '"' -f 4 \
-            | xargs wget -q -O mihomo-linux-amd64-alpha.deb
+          echo "count=$COUNT"
+          echo "count=$COUNT" >> $GITHUB_OUTPUT
 
-          sudo apt install --fix-missing ./mihomo-linux-amd64-alpha.deb
-          /usr/bin/mihomo &
-
-      # convert
-      - name: start convert
-        run: |
-          chmod +x ./script/convert.sh
-          ./script/convert.sh
-
-      # commit
-      - name: Commit and Push Changes
-        run: |
-          if [ -n "$(git status --porcelain)" ]; then
-            git add --all
-            git commit -m "${{ env.BUILDTIME }} for OCD"
-            git push origin master
+          if [ "$COUNT" -gt "$MAX_COMMITS" ]; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "Too many commits, skip auto sync"
           else
-            echo "No changes to commit"
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      # Sync upstream
+      - name: Sync upstream
+        if: steps.check.outputs.skip == 'false'
+        run: |
+          mkdir -p backup
+
+          cp -f .gitignore README.md .github/workflows/ci.yaml script/convert.sh backup/ || true
+
+          git merge upstream/main --strategy-option theirs --allow-unrelated-histories --no-edit
+
+          cp -f backup/.gitignore .gitignore || true
+          cp -f backup/README.md README.md || true
+          cp -f backup/ci.yaml .github/workflows/ci.yaml || true
+          cp -f backup/convert.sh script/convert.sh || true
+
+      # Push
+      - name: Push changes
+        if: steps.check.outputs.skip == 'false'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if [ -n "$(git status --porcelain)" ]; then
+            git add -A
+            git commit -m "sync upstream"
+            git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git master
+          else
+            echo "No changes"
           fi
