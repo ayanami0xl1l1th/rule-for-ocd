@@ -2,17 +2,21 @@ name: ci
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 7 * * *'
-#  push:
-#    branches:
-#      - master
+  workflow_run:
+    workflows: ["Auto Sync Fork"]
+    types:
+      - completed
 
 jobs:
   build:
+    if: >
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
+
     runs-on: ubuntu-latest
     permissions:
       contents: write
+
     steps:
       - name: Add token
         uses: actions/checkout@v4
@@ -32,9 +36,13 @@ jobs:
           git checkout master
           git remote add upstream https://github.com/blackmatrix7/ios_rule_script.git
           git fetch --depth=1 upstream
+
           mkdir -p ./backup/
+
           cp -f .gitignore README.md .github/workflows/ci.yaml script/convert.sh ./backup/
+
           git merge upstream/master --strategy-option theirs --allow-unrelated-histories --no-edit
+
           cp -f ./backup/.gitignore .gitignore
           cp -f ./backup/README.md README.md
           cp -f ./backup/ci.yaml .github/workflows/ci.yaml
@@ -47,8 +55,10 @@ jobs:
             | head -n 1 \
             | cut -d '"' -f 4 \
             | xargs wget -q
+
           tar -xf subconverter_linux64.tar.gz
           ./subconverter/subconverter &
+
           python3 -m http.server 8080 --bind 127.0.0.1 --directory './rule/' &
 
       - name: Background run mihomo
@@ -58,6 +68,7 @@ jobs:
             | head -n 1 \
             | cut -d '"' -f 4 \
             | xargs wget -q -O mihomo-linux-amd64-alpha.deb
+
           sudo apt install --fix-missing ./mihomo-linux-amd64-alpha.deb
           /usr/bin/mihomo &
 
