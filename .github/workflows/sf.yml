@@ -2,7 +2,7 @@ name: Auto Sync Fork
 
 on:
   schedule:
-    - cron: '0 7 * * *' # 每天 UTC 20:00
+    - cron: '0 7 * * *'
   workflow_dispatch:
 
 jobs:
@@ -10,50 +10,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
-      - name: Quick check if sync needed
-        id: quick_check
-        run: |
-          git clone --depth 1 https://github.com/${{ github.repository }}.git local_repo
-          cd local_repo
-
-          # upstream 最新 commit
-          UPSTREAM_HASH=$(git ls-remote https://github.com/peiyingyao/Rule-for-OCD.git refs/heads/master | cut -f1)
-
-          LOCAL_HASH=$(git ls-remote origin refs/heads/master | cut -f1)
-
-          echo "UPSTREAM_HASH=$UPSTREAM_HASH"
-          echo "LOCAL_HASH=$LOCAL_HASH"
-
-          echo "UPSTREAM_HASH=$UPSTREAM_HASH" >> $GITHUB_OUTPUT
-          echo "LOCAL_HASH=$LOCAL_HASH" >> $GITHUB_OUTPUT
-
-          if [ "$UPSTREAM_HASH" != "$LOCAL_HASH" ]; then
-            echo "need_sync=true" >> $GITHUB_OUTPUT
-          else
-            echo "need_sync=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Full sync (only if needed)
-        if: steps.quick_check.outputs.need_sync == 'true'
-        uses: actions/checkout@v4
+      - name: Fork Sync
+        uses: tgymnich/fork-sync@v2.0.10
         with:
-          fetch-depth: 1
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Setup and sync
-        if: steps.quick_check.outputs.need_sync == 'true'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git remote add upstream https://github.com/peiyingyao/Rule-for-OCD.git
-          git fetch upstream master
-
-          git merge upstream/master --no-edit
-
-          git push origin master
-
-      - name: Skip message
-        if: steps.quick_check.outputs.need_sync == 'false'
-        run: echo "✅ 已是最新，无需同步"
+          owner: peiyingyao
+          base: master
+          head: master
