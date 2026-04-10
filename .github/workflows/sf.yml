@@ -2,18 +2,29 @@ name: Auto Sync Fork
 
 on:
   schedule:
-    - cron: '0 7 * * *'
-  workflow_dispatch:
+    - cron: "0 7 * * *"   # 每天自动同步（UTC时间）
+  workflow_dispatch:       # 手动按钮触发
 
 jobs:
   sync:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Fork Sync
-        uses: tgymnich/fork-sync@v2.0.10
+      - name: Checkout main branch
+        uses: actions/checkout@v4
         with:
-          owner: peiyingyao
-          repo: Rule-for-OCD
-          base: master
-          head: master
+          ref: master
+          fetch-depth: 0
+
+      - name: Sync from upstream
+        uses: aormsby/Fork-Sync-With-Upstream-action@v3
+        with:
+          upstream_repository: peiyingyao/Rule-for-OCD
+          upstream_branch: master
+          target_branch: master
+          git_pull_args: --ff-only
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Show result
+        if: steps.sync.outputs.has_new_commits == 'true'
+        run: echo "Upstream updated successfully"
