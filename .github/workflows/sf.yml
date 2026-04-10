@@ -14,42 +14,49 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # checkout
-      - name: Init repo (fast)
+      - name: Init repo
         run: |
           git init
           git remote add origin https://github.com/${{ github.repository }}.git
-          git fetch --depth=1 origin master
-          git checkout master
+          git fetch --depth=1 origin
+          git checkout -B master
 
-      # Add upstream
+      # upstream
       - name: Add upstream
         run: |
           git remote add upstream https://github.com/peiyingyao/Rule-for-OCD.git
           git fetch --depth=1 upstream
 
-      # Check commit difference
+      - name: Detect upstream branch
+        id: branch
+        run: |
+          BRANCH=$(git remote show upstream | grep "HEAD branch" | awk '{print $NF}')
+          echo "branch=$BRANCH"
+          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+
+      # commit
       - name: Check updates
         id: check
         run: |
           MAX_COMMITS=10
 
           LOCAL=$(git rev-parse HEAD)
-          UPSTREAM=$(git rev-parse upstream/main)
+          UPSTREAM=$(git rev-parse upstream/${{ steps.branch.outputs.branch }})
 
           COUNT=$(git rev-list --count ${LOCAL}..${UPSTREAM})
 
-          echo "count=$COUNT"
+          echo "upstream commits: $COUNT"
+
           echo "count=$COUNT" >> $GITHUB_OUTPUT
 
           if [ "$COUNT" -gt "$MAX_COMMITS" ]; then
             echo "skip=true" >> $GITHUB_OUTPUT
-            echo "Too many commits, skip auto sync"
+            echo "Too many commits, skip sync"
           else
             echo "skip=false" >> $GITHUB_OUTPUT
           fi
 
-      # Sync upstream
+      # sync
       - name: Sync upstream
         if: steps.check.outputs.skip == 'false'
         run: |
@@ -57,15 +64,18 @@ jobs:
 
           cp -f .gitignore README.md .github/workflows/ci.yaml script/convert.sh backup/ || true
 
-          git merge upstream/main --strategy-option theirs --allow-unrelated-histories --no-edit
+          git merge upstream/${{ steps.branch.outputs.branch }} \
+            --strategy-option theirs \
+            --allow-unrelated-histories \
+            --no-edit
 
           cp -f backup/.gitignore .gitignore || true
           cp -f backup/README.md README.md || true
           cp -f backup/ci.yaml .github/workflows/ci.yaml || true
           cp -f backup/convert.sh script/convert.sh || true
 
-      # Push
-      - name: Push changes
+      # push
+      - name: Commit and push
         if: steps.check.outputs.skip == 'false'
         run: |
           git config user.name "github-actions[bot]"
